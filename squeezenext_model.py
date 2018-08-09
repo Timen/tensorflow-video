@@ -10,17 +10,18 @@ from optimizer  import PolyOptimizer
 from dataloader import ReadTFRecords
 import tools
 import os
+import model_heads
+from loss import detection_loss
+
 metrics = tf.contrib.metrics
 
 class Model(object):
-    def __init__(self, config, batch_size,sequence_length):
+    def __init__(self, config):
         self.image_size = config["image_size"]
         self.num_classes = config["num_classes"]+1
-        self.batch_size = batch_size
-        self.sequence_length = sequence_length
-        self.read_tf_records = ReadTFRecords(self.image_size, self.batch_size, self.num_classes)
+        self._config = config
 
-    def define_batch_size(self, features, labels):
+    def define_batch_size(self, features, labels,batch_size):
         """
         Define batch size of dictionary
         :param features:
@@ -30,11 +31,11 @@ class Model(object):
         :return:
             (features,label)
         """
-        features = tools.define_first_dim(features, self.batch_size)
-        labels = tools.define_first_dim(labels, self.batch_size)
+        features = tools.define_first_dim(features, batch_size)
+        labels = tools.define_first_dim(labels, batch_size)
         return (features, labels)
 
-    def input_fn(self, file_pattern,training):
+    def input_fn(self, file_pattern,training,batch_size,sequence_length):
         """
         Input fn of model
         :param file_pattern:
@@ -44,7 +45,8 @@ class Model(object):
         :return:
             Input generator
         """
-        return self.define_batch_size(*self.read_tf_records(file_pattern,self.sequence_length,training=training))
+        read_tf_records = ReadTFRecords(batch_size, self._config)
+        return self.define_batch_size(*read_tf_records(file_pattern,sequence_length,training=training),batch_size=batch_size)
 
     def model_fn(self, features, labels, mode, params):
         """
@@ -62,29 +64,24 @@ class Model(object):
         """
 
         training = mode == tf.estimator.ModeKeys.TRAIN
+        batch_size,sequence_length = tuple(labels["loss_masks"].get_shape().as_list())
         # init model class
         model = squeezenext.SqueezeNext(self.num_classes, params["block_defs"], params["input_def"], params["groups"],params["seperate_relus"])
-        conv_lstm = tfe.ConvolutionalLstm( model, training,self.num_classes)
+        model_head = model_heads.ModelHead(params)
+        conv_lstm = tfe.ConvolutionalLstm( model, model_head, training,params)
         predictions, last_states = tf.nn.dynamic_rnn(
             cell=conv_lstm,
             dtype=tf.float32,
-            sequence_length=labels["example_length"][:,0],
+            sequence_length=features["example_length"][:,0],
             inputs=features["images"])
-        pred_flat = tf.reshape(predictions,[-1,self.num_classes])
-        label_flat = tf.reshape(labels["class_vec"],[-1,self.num_classes])
-        mask_flat = tf.reshape(labels["loss_masks"],[-1])
-
-        loss =  tf.losses.softmax_cross_entropy(label_flat, pred_flat)
-        masked_losses = loss * mask_flat
-        masked_losses = tf.reshape(masked_losses, [self.batch_size,self.sequence_length])
-        mean_loss_by_example = tf.reduce_sum(masked_losses, reduction_indices=1) / tf.cast(labels["example_length"],tf.float32)
-        loss = tf.reduce_mean(mean_loss_by_example)
-
+        loss, cls_loss, box_loss =  detection_loss(predictions,labels,params)
 
         # create histogram of class spread
-        tf.summary.histogram("classes",labels["class_idx"])
+        tf.summary.histogram("classes",labels["cls_targets"][params["min_level"]])
 
         if training:
+            tf.summary.scalar("box_loss",box_loss)
+            tf.summary.scalar("cls_loss", cls_loss)
             # init poly optimizer
             optimizer = PolyOptimizer(params)
             # define train op
@@ -92,24 +89,28 @@ class Model(object):
 
             # if params["output_train_images"] is true output images during training
             if params["output_train_images"]:
-                tf.summary.image("training", features["images"][0,:,:,:,:])
-            stats_hook = tools.stats.ModelStats("rnn/"+conv_lstm.scope_name+"/squeezenext", params["model_dir"],self.batch_size)
+                tools.draw_box_predictions(features["images"],predictions,labels,params,sequence_length)
+
+            # stats_hook = tools.stats.ModelStats("rnn/"+conv_lstm.scope_name+"/squeezenext", params["model_dir"],batch_size*sequence_length)
             # setup fine tune scaffold
             scaffold = tf.train.Scaffold(init_op=None,
-                                         init_fn=tools.fine_tune.init_weights("rnn/"+conv_lstm.scope_name+"/squeezenext", params["fine_tune_ckpt"],ignore_vars=["/fully_connected/weights"]))
+                                         init_fn=tools.fine_tune.init_weights("rnn/"+conv_lstm.scope_name+"/classifier/", params["fine_tune_ckpt"],ignore_vars=["squeezenext/fully_connected/weights"]))
 
             # create estimator training spec, which also outputs the model_stats of the model to params["model_dir"]
-            return tf.estimator.EstimatorSpec(mode, loss=loss, train_op=train_op, training_hooks=[stats_hook],scaffold=scaffold)
+            return tf.estimator.EstimatorSpec(mode, loss=loss, train_op=train_op,scaffold=scaffold)
 
 
 
         if mode == tf.estimator.ModeKeys.EVAL:
+            eval_metric = tools.coco_metrics.EvaluationMetric()
+            coco_metrics = eval_metric.estimator_metric_fn(tools.eval_predictions(predictions,params),tools.eval_labels(labels))
+
             # Define the metrics:
-            metrics_dict = {
-                'Recall@1': tf.metrics.accuracy(tf.argmax(predictions, axis=-1), labels["class_idx"][:, 0]),
-                'Recall@5': metrics.streaming_sparse_recall_at_k(predictions, tf.cast(labels["class_idx"], tf.int64),
-                                                                 5)
-            }
+            # metrics_dict = {
+            #     'Recall@1': tf.metrics.accuracy(tf.argmax(predictions, axis=-1), labels["class_idx"][:, 0]),
+            #     'Recall@5': metrics.streaming_sparse_recall_at_k(predictions, tf.cast(labels["class_idx"], tf.int64),
+            #                                                      5)
+            # }
             # output eval images
             eval_summary_hook = tf.train.SummarySaverHook(
                 save_steps=100,
@@ -118,5 +119,5 @@ class Model(object):
 
             #return eval spec
             return tf.estimator.EstimatorSpec(
-                mode, loss=loss, eval_metric_ops=metrics_dict,
+                mode, loss=loss, eval_metric_ops=coco_metrics,
                 evaluation_hooks=[eval_summary_hook])

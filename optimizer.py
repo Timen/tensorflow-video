@@ -38,7 +38,7 @@ class PolyOptimizer(object):
             )
             learning_rate_schedule = tools.warmup_phase(learning_rate_schedule,self.base_lr, self.warmup_steps,self.warmup_learning_rate)
             tf.summary.scalar("learning_rate",learning_rate_schedule)
-            optimizer = tf.train.MomentumOptimizer(learning_rate_schedule,self.momentum)
+            optimizer = tf.train.RMSPropOptimizer(learning_rate_schedule)
             return slim.learning.create_train_op(loss,
                                         optimizer,
                                 global_step=global_step,

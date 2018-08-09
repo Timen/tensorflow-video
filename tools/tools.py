@@ -2,6 +2,9 @@ from __future__ import absolute_import
 
 import tensorflow as tf
 import os
+from collections import OrderedDict
+import anchors
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # or any {'0', '1', '2'}
 
 def define_first_dim(tensor_dict,dim_size):
     """
@@ -13,10 +16,98 @@ def define_first_dim(tensor_dict,dim_size):
     :return:
         Dictionary of dimensions with the first dim defined as dim_size
     """
-    for key, tensor in tensor_dict.iteritems():
-        shape = tensor.get_shape().as_list()[1:]
-        tensor_dict[key] = tf.reshape(tensor, [dim_size] + shape)
+    for key, value in tensor_dict.iteritems():
+        if isinstance(value, dict):
+            nested_shape_dict = OrderedDict()
+            for nested_key, tensor in value.iteritems():
+                shape = tensor.get_shape().as_list()[1:]
+                nested_shape_dict[nested_key] = tf.reshape(tensor, [dim_size] + shape)
+            tensor_dict[key] = nested_shape_dict
+        else:
+            shape = value.get_shape().as_list()[1:]
+            tensor_dict[key] = tf.reshape(value, [dim_size] + shape)
     return tensor_dict
+
+
+def combine_dims(tensor,dims):
+    tensor_shape = tensor.get_shape().as_list()
+    sizes = [tensor_shape[i] for i in dims]
+    combined_dim = reduce(lambda x,y:x*y,sizes)
+    new_shape = []
+    add_combined = False
+    for idx,dim in enumerate(tensor_shape):
+        if not idx in dims:
+            new_shape.append(dim)
+        elif not add_combined:
+            new_shape.append(combined_dim)
+            add_combined = True
+    return tf.reshape(tensor,new_shape)
+
+
+def get_pred_results(cls_outputs_dict,box_outputs_dict, params):
+    input_anchors = anchors.Anchors(params['min_level'], params['max_level'],
+                                    params['num_scales'],
+                                    params['aspect_ratios'],
+                                    params['anchor_scale'],
+                                    (params['image_size'] - 5))
+    anchor_labeler = anchors.AnchorLabeler(input_anchors, params['num_classes'])
+
+    return tf.map_fn(anchor_labeler.generate_detections,(cls_outputs_dict,box_outputs_dict),dtype=tf.float32)
+
+def yxyx_to_xywh(bboxes):
+    ymin = bboxes[:,:,0:1]
+    xmin = bboxes[:, :, 1:2]
+    ymax = bboxes[:, :, 2:3]
+    xmax = bboxes[:, :, 3:4]
+    width = xmax-xmin
+    height = ymax-ymin
+
+    return tf.concat([xmin,ymin,width,height],axis=-1)
+
+
+
+def draw_box_predictions(images,predictions,labels,params,sequence_length,num_display=4,max_images=32):
+    if (num_display*sequence_length) > max_images:
+        num_display = max_images/sequence_length
+
+    for i in range(0,num_display):
+        cls_outputs_dict = {}
+        box_outputs_dict = {}
+
+        # image = tf.image.draw_bounding_boxes(images[i, :, :, :, :],labels["boxes"][i, :, :,:]/params['image_size'])
+        image = images[i, :, :, :, :]
+        for idx,(cls_outputs,box_outputs) in enumerate(zip(*predictions)):
+            cls_outputs_dict[params["min_level"]+idx] = cls_outputs[i,:,:,:,:]
+            box_outputs_dict[params["min_level"]+idx] = box_outputs[i,:,:,:,:]
+        boxes = get_pred_results(cls_outputs_dict,box_outputs_dict,params)[:,:,0:4]
+        tf.summary.image("sequence_{}".format(i), tf.image.draw_bounding_boxes(image,boxes/params['image_size']), max_outputs=sequence_length)
+
+def eval_predictions(predictions,params):
+
+    cls_outputs_dict = {}
+    box_outputs_dict = {}
+
+    for idx,(cls_outputs,box_outputs) in enumerate(zip(*predictions)):
+        cls_outputs_dict[params["min_level"]+idx] = combine_dims(cls_outputs,[0,1])
+        box_outputs_dict[params["min_level"]+idx] = combine_dims(box_outputs, [0, 1])
+    results = get_pred_results(cls_outputs_dict,box_outputs_dict,params)
+    results = tf.concat([tf.zeros_like(results[:,:,0:1]),yxyx_to_xywh(results[:,:,0:4]),results[:,:,4:]],axis=-1)
+    return results
+
+def eval_labels(labels):
+    classes = combine_dims(labels["classes"],[0,1])
+    boxes = combine_dims(labels["boxes"], [0, 1])
+    return tf.concat([boxes,classes],axis=-1)
+def create_feature_pyramid(inputs):
+    with tf.name_scope("feature_pyramid"):
+        for idx, input_image in enumerate(inputs):
+            if idx+1 < len(inputs):
+                next_scale = inputs[idx+1]
+                size = next_scale.get_shape().as_list()[1:3]
+                upsampled = tf.image.resize_nearest_neighbor(input_image,size)
+                inputs[idx+1] =  upsampled+next_scale
+        return inputs
+
 
 def get_checkpoint_step(checkpoint_dir):
     """
