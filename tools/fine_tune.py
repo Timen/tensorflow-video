@@ -6,12 +6,12 @@ slim = tf.contrib.slim
 def remap_vars(variables,remove_scope):
     variables_dict = {}
     for var in variables:
-        mapped_name = var.name.replace(remove_scope,'')
+        mapped_name = var.name.replace(remove_scope+"/",'')
         variables_dict[mapped_name[:-2]] = var
     return variables_dict
 
 
-def init_weights(scope_name, path, ignore_vars=[]):
+def init_weights(scope_name, path, ignore_vars=[],ignore_strings=[]):
     if path == None:
         return
 
@@ -24,7 +24,7 @@ def init_weights(scope_name, path, ignore_vars=[]):
         ignore_vars = [scope_name+var for var in ignore_vars]
 
         variables_to_restore = slim.get_variables_to_restore(include=[scope_name],exclude=ignore_vars)
-        variables_to_restore = filter(lambda variable: not "RMSProp" in variable.name and not "prelu" in variable.name, variables_to_restore)
+        variables_to_restore = filter(lambda variable: not any( ignore_string in variable.name for ignore_string in ignore_strings) , variables_to_restore)
         variables_to_restore = remap_vars(variables_to_restore,scope_name)
 
         # Create the saver which will be used to restore the variables.

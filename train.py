@@ -1,7 +1,7 @@
 from __future__ import absolute_import
 import tensorflow as tf
 from configs import configs
-from squeezenext_model import Model
+from video_retinanet import Model
 import argparse
 from tensorflow.python import debug as tf_debug
 from dataloader import ReadTFRecords

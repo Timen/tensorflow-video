@@ -6,7 +6,7 @@ slim = tf.contrib.slim
 metrics = tf.contrib.metrics
 import squeezenext_architecture as squeezenext
 import tensorflow_extentions as tfe
-from optimizer  import PolyOptimizer
+from optimizer import PolyOptimizer
 from dataloader import ReadTFRecords
 import tools
 import os
@@ -15,13 +15,14 @@ from loss import detection_loss
 
 metrics = tf.contrib.metrics
 
+
 class Model(object):
     def __init__(self, config):
         self.image_size = config["image_size"]
-        self.num_classes = config["num_classes"]+1
+        self.num_classes = config["num_classes"]
         self._config = config
 
-    def define_batch_size(self, features, labels,batch_size):
+    def define_batch_size(self, features, labels, batch_size):
         """
         Define batch size of dictionary
         :param features:
@@ -35,7 +36,7 @@ class Model(object):
         labels = tools.define_first_dim(labels, batch_size)
         return (features, labels)
 
-    def input_fn(self, file_pattern,training,batch_size,sequence_length):
+    def input_fn(self, file_pattern, training, batch_size, sequence_length):
         """
         Input fn of model
         :param file_pattern:
@@ -46,7 +47,8 @@ class Model(object):
             Input generator
         """
         read_tf_records = ReadTFRecords(batch_size, self._config)
-        return self.define_batch_size(*read_tf_records(file_pattern,sequence_length,training=training),batch_size=batch_size)
+        return self.define_batch_size(*read_tf_records(file_pattern, sequence_length, training=training),
+                                      batch_size=batch_size)
 
     def model_fn(self, features, labels, mode, params):
         """
@@ -64,23 +66,46 @@ class Model(object):
         """
 
         training = mode == tf.estimator.ModeKeys.TRAIN
-        batch_size,sequence_length = tuple(labels["loss_masks"].get_shape().as_list())
-        # init model class
-        model = squeezenext.SqueezeNext(self.num_classes, params["block_defs"], params["input_def"], params["groups"],params["seperate_relus"])
+        batch_size, sequence_length = tuple(labels["loss_masks"].get_shape().as_list())
+        unpadded_features = features["example_length"][:, 0]
+
+
+        classifier = squeezenext.SqueezeNext(self.num_classes, params["block_defs"], params["input_def"],
+                                             params["groups"], params["seperate_relus"])
+        with slim.arg_scope(classifier.model_arg_scope(training)):
+            with tf.variable_scope("classifier"):
+                classifier_endpoints,scope_string = tfe.time_distributed(features["images"], unpadded_features, classifier,
+                                                            [[28, 28, 64], [14, 14, 128], [7, 7, 256]],
+                                                            endpoints=["block_1/unit_0", "block_2/unit_0", "block_3/unit_0"],
+                                                            return_scope_string=True)
+        conv_lstm = tfe.ConvolutionalLstm(classifier_endpoints)
+
+        with tf.variable_scope("bottleneck_lstm"):
+            init_state = tfe.initial_state.make_gaussian_state_initializer(
+                conv_lstm,
+                batch_size,
+                tf.constant(False))
+            predictions, last_states = tf.nn.dynamic_rnn(
+                cell=conv_lstm,
+                dtype=tf.float32,
+                sequence_length=unpadded_features,
+                inputs=classifier_endpoints,
+                initial_state=init_state)
+
         model_head = model_heads.ModelHead(params)
-        conv_lstm = tfe.ConvolutionalLstm( model, model_head, training,params)
-        predictions, last_states = tf.nn.dynamic_rnn(
-            cell=conv_lstm,
-            dtype=tf.float32,
-            sequence_length=features["example_length"][:,0],
-            inputs=features["images"])
-        loss, cls_loss, box_loss =  detection_loss(predictions,labels,params)
+        with slim.arg_scope(model_head.model_arg_scope(training)):
+            with tf.variable_scope("model_head"):
+                predictions = tfe.time_distributed(predictions, unpadded_features,
+                                                            model_head,
+                                                            model_head.output_size(predictions))
+
+        loss, cls_loss, box_loss = detection_loss(predictions, labels, params)
 
         # create histogram of class spread
-        tf.summary.histogram("classes",labels["cls_targets"][params["min_level"]])
+        tf.summary.histogram("classes", labels["cls_targets"][params["min_level"]])
 
         if training:
-            tf.summary.scalar("box_loss",box_loss)
+            tf.summary.scalar("box_loss", box_loss)
             tf.summary.scalar("cls_loss", cls_loss)
             # init poly optimizer
             optimizer = PolyOptimizer(params)
@@ -89,17 +114,19 @@ class Model(object):
 
             # if params["output_train_images"] is true output images during training
             if params["output_train_images"]:
-                tools.draw_box_predictions(features["images"],predictions,labels,params,sequence_length)
+                tools.draw_box_predictions(features["images"], predictions, labels, params, sequence_length)
 
-            # stats_hook = tools.stats.ModelStats("rnn/"+conv_lstm.scope_name+"/squeezenext", params["model_dir"],batch_size*sequence_length)
+            # stats_hook = tools.stats.ModelStats("rnn/"+conv_lstm.scope_name+"/squeezenext", params["model_dir"],
+            # batch_size*sequence_length)
             # setup fine tune scaffold
             scaffold = tf.train.Scaffold(init_op=None,
-                                         init_fn=tools.fine_tune.init_weights("rnn/"+conv_lstm.scope_name+"/classifier/", params["fine_tune_ckpt"],ignore_vars=["squeezenext/fully_connected/weights"]))
+                                         init_fn=tools.fine_tune.init_weights(
+                                             scope_string, params["fine_tune_ckpt"],
+                                             ignore_vars=["/squeezenext/fully_connected/weights"],
+                                                ignore_strings = ["RMSProp"]))
 
             # create estimator training spec, which also outputs the model_stats of the model to params["model_dir"]
-            return tf.estimator.EstimatorSpec(mode, loss=loss, train_op=train_op,scaffold=scaffold)
-
-
+            return tf.estimator.EstimatorSpec(mode, loss=loss, train_op=train_op, scaffold=scaffold)
 
         if mode == tf.estimator.ModeKeys.EVAL:
             eval_metric = tools.coco_metrics.EvaluationMetric()

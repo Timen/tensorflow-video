@@ -58,6 +58,41 @@ def squeezenext_unit(inputs, filters, stride, height_first_order, groups, sepera
 
     return tf.nn.relu(block + shortcut), height_first_order
 
+def arg_scope(is_training,
+                    weight_decay=0.0001,
+                    updates_collections=None):
+    """
+    Setup slim arg scope according to paper and github project
+    :param is_training:
+        Whether or not the network is training
+    :param weight_decay:
+        Weight decay of the convolutional layers
+    :return:
+        Slim arg scope
+    """
+    batch_norm_params = {
+        'is_training': is_training,
+        'center': True,
+        'scale': True,
+        'decay': 0.999,
+        'epsilon': 1e-5,
+        'fused': True,
+        "updates_collections": updates_collections if updates_collections is not None else tf.GraphKeys.UPDATE_OPS
+    }
+
+    # Use xavier an l2 decay
+    weights_init = tf.contrib.layers.xavier_initializer()
+    regularizer = tf.contrib.layers.l2_regularizer(weight_decay)
+
+    with slim.arg_scope([slim.conv2d, tfe.grouped_convolution, slim.separable_conv2d],
+                        weights_initializer=weights_init,
+                        normalizer_fn=slim.batch_norm,
+                        biases_initializer=None,
+                        activation_fn=tf.nn.relu):
+        with slim.arg_scope([slim.conv2d, tfe.grouped_convolution],
+                            weights_regularizer=regularizer):
+            with slim.arg_scope([slim.batch_norm], **batch_norm_params) as sc:
+                return sc
 
 class SqueezeNext(object):
     """Base class for building the SqueezeNext Model."""
@@ -69,7 +104,7 @@ class SqueezeNext(object):
         self.groups = groups
         self.seperate_relus = seperate_relus
 
-    def __call__(self, inputs, training, height_first_order=True):
+    def __call__(self, inputs, height_first_order=True):
         """Add operations to classify a batch of input images.
 
         Args:
@@ -125,36 +160,4 @@ class SqueezeNext(object):
     def model_arg_scope(self, is_training,
                         weight_decay=0.0001,
                         updates_collections=None):
-        """
-        Setup slim arg scope according to paper and github project
-        :param is_training:
-            Whether or not the network is training
-        :param weight_decay:
-            Weight decay of the convolutional layers
-        :return:
-            Slim arg scope
-        """
-        batch_norm_params = {
-            'is_training': is_training,
-            'center': True,
-            'scale': True,
-            'decay': 0.999,
-            'epsilon': 1e-5,
-            'fused': True,
-            "updates_collections": updates_collections if updates_collections is not None else tf.GraphKeys.UPDATE_OPS
-        }
-
-        # Use xavier an l2 decay
-        weights_init = tf.contrib.layers.xavier_initializer()
-        regularizer = tf.contrib.layers.l2_regularizer(weight_decay)
-
-        with slim.arg_scope([slim.conv2d, tfe.grouped_convolution, slim.separable_conv2d],
-                            weights_initializer=weights_init,
-                            normalizer_fn=slim.batch_norm,
-                            normalizer_params=batch_norm_params,
-                            biases_initializer=None,
-                            activation_fn=tf.nn.elu):
-            with slim.arg_scope([slim.conv2d, tfe.grouped_convolution],
-                                weights_regularizer=regularizer):
-                with slim.arg_scope([slim.batch_norm], **batch_norm_params) as sc:
-                    return sc
+        return arg_scope(is_training,weight_decay=weight_decay,updates_collections=updates_collections)

@@ -67,13 +67,11 @@ def _box_loss(box_outputs, box_targets, num_positives,mask_flat, delta=0.1):
 
 def structure_for_loss(predictions, params):
     class_dict = OrderedDict()
-    min_level = params["min_level"]
-    for idx, output in enumerate(predictions[0]):
-        class_dict[min_level + idx] = tools.combine_dims(output, [0, 1])
-
     box_dict = OrderedDict()
-    for idx, output in enumerate(predictions[1]):
-        box_dict[min_level + idx] = tools.combine_dims(output, [0, 1])
+    min_level = params["min_level"]
+    for idx, output in enumerate(predictions):
+        class_dict[min_level + idx] = tools.combine_dims(output[0], [0, 1])
+        box_dict[min_level + idx] = tools.combine_dims(output[1], [0, 1])
     return class_dict,box_dict
 
 def detection_loss(predictions, labels, params):

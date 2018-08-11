@@ -4,6 +4,7 @@ import tensorflow as tf
 import os
 from collections import OrderedDict
 import anchors
+slim = tf.contrib.slim
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # or any {'0', '1', '2'}
 
 def define_first_dim(tensor_dict,dim_size):
@@ -76,7 +77,7 @@ def draw_box_predictions(images,predictions,labels,params,sequence_length,num_di
 
         # image = tf.image.draw_bounding_boxes(images[i, :, :, :, :],labels["boxes"][i, :, :,:]/params['image_size'])
         image = images[i, :, :, :, :]
-        for idx,(cls_outputs,box_outputs) in enumerate(zip(*predictions)):
+        for idx,(cls_outputs,box_outputs) in enumerate(predictions):
             cls_outputs_dict[params["min_level"]+idx] = cls_outputs[i,:,:,:,:]
             box_outputs_dict[params["min_level"]+idx] = box_outputs[i,:,:,:,:]
         boxes = get_pred_results(cls_outputs_dict,box_outputs_dict,params)[:,:,0:4]
@@ -98,11 +99,15 @@ def eval_labels(labels):
     classes = combine_dims(labels["classes"],[0,1])
     boxes = combine_dims(labels["boxes"], [0, 1])
     return tf.concat([boxes,classes],axis=-1)
-def create_feature_pyramid(inputs):
+
+
+
+def create_feature_pyramid(inputs, default_length=128):
+    inputs = [ slim.conv2d(tensor,default_length,[1,1]) for tensor in inputs]
     with tf.name_scope("feature_pyramid"):
         for idx, input_image in enumerate(inputs):
             if idx+1 < len(inputs):
-                next_scale = inputs[idx+1]
+                next_scale =inputs[idx+1]
                 size = next_scale.get_shape().as_list()[1:3]
                 upsampled = tf.image.resize_nearest_neighbor(input_image,size)
                 inputs[idx+1] =  upsampled+next_scale
