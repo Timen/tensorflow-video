@@ -5,7 +5,8 @@ import tensorflow as tf
 slim = tf.contrib.slim
 import contextlib
 import collections
-
+import pprint
+import tensorflow_extentions as tfe
 @contextlib.contextmanager
 def _v1_compatible_scope_naming(scope):
   if scope is None:  # Create uniqified separable blocks.
@@ -189,15 +190,15 @@ class ConvolutionalLstm(tf.nn.rnn_cell.RNNCell):
                     self._output_shapes.append(shape[:-1]+[num_filters])
 
 
-
     @property
     def state_size(self):
-        states = [[tf.TensorShape(shape),tf.TensorShape(shape)]for shape in self._output_shapes]
+        states = [(shape,shape)for shape in self._output_shapes]
         return states
 
     @property
     def output_size(self):
-        return self._output_shapes
+        outputs = [tf.constant(shape) for shape in self._output_shapes]
+        return outputs
 
 
     def __call__(self, inputs, states, scope=None):
@@ -221,3 +222,7 @@ class ConvolutionalLstm(tf.nn.rnn_cell.RNNCell):
                         output_states.append(result)
             with tf.control_dependencies(tf.get_collection("rnn_batchnorm")):
                 return outputs, output_states
+
+    def zero_state(self, batch_size, dtype):
+        initializer = tfe.initial_state.zero_state_initializer
+        return tfe.initial_state.get_initial_cell_state(self, initializer, batch_size, tf.float32)

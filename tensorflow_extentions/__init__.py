@@ -1,4 +1,4 @@
 from grouped_convolution import grouped_convolution
-from convolutional_lstm import ConvolutionalLstm
+from bottleneck_lstm import ConvolutionalLstm
 from time_wrapper import time_distributed
 import initial_state

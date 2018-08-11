@@ -81,10 +81,10 @@ class Model(object):
         conv_lstm = tfe.ConvolutionalLstm(classifier_endpoints)
 
         with tf.variable_scope("bottleneck_lstm"):
-            init_state = tfe.initial_state.make_gaussian_state_initializer(
-                conv_lstm,
-                batch_size,
-                tf.constant(False))
+            initializer = tfe.initial_state.make_gaussian_state_initializer(tfe.initial_state.make_variable_state_initializer(),
+                                                          tf.constant(False))
+
+            init_state = tfe.initial_state.get_initial_cell_state(conv_lstm, initializer, batch_size, tf.float32)
             predictions, last_states = tf.nn.dynamic_rnn(
                 cell=conv_lstm,
                 dtype=tf.float32,

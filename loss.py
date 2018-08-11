@@ -93,49 +93,50 @@ def detection_loss(predictions, labels, params):
       cls_loss: an integar tensor representing total class loss.
       box_loss: an integar tensor representing total box regression loss.
     """
-    # Sum all positives in a batch for normalization and avoid zero
-    # num_positives_sum, which would lead to inf loss during training
-    input_shape = predictions[0][0].get_shape().as_list()
-    batch_size = input_shape[0]
-    sequence_length = input_shape[1]
-    num_positives_batch = tf.reduce_mean(labels["num_positives"])
-    mean_positive = tf.reshape(
-        tf.tile(tf.expand_dims(num_positives_batch, 0), [
-            batch_size*sequence_length,
-        ]), [batch_size*sequence_length, 1])
-    num_positives_sum = tf.reduce_sum(mean_positive) + 1.0
-    cls_outputs, box_outputs = structure_for_loss(predictions, params)
-    levels = cls_outputs.keys()
+    with tf.name_scope("detection_loss"):
+        # Sum all positives in a batch for normalization and avoid zero
+        # num_positives_sum, which would lead to inf loss during training
+        input_shape = predictions[0][0].get_shape().as_list()
+        batch_size = input_shape[0]
+        sequence_length = input_shape[1]
+        num_positives_batch = tf.reduce_mean(labels["num_positives"])
+        mean_positive = tf.reshape(
+            tf.tile(tf.expand_dims(num_positives_batch, 0), [
+                batch_size*sequence_length,
+            ]), [batch_size*sequence_length, 1])
+        num_positives_sum = tf.reduce_sum(mean_positive) + 1.0
+        cls_outputs, box_outputs = structure_for_loss(predictions, params)
+        levels = cls_outputs.keys()
 
-    cls_losses = []
-    box_losses = []
-    mask_flat = tf.reshape(labels["loss_masks"], [-1,1,1,1])
-    for level in levels:
-        # Onehot encoding for classification labels.
-        cls_targets_at_level = tf.one_hot(
-            tools.combine_dims(labels['cls_targets'][level],[0,1]),
-            params['num_classes'])
-        bs, width, height, _, _ = cls_targets_at_level.get_shape().as_list()
-        cls_targets_at_level = tf.reshape(cls_targets_at_level,
-                                          [bs, width, height, -1])
-        box_targets_at_level = tools.combine_dims(labels['box_targets'][level],[0,1])
-        cls_losses.append(
-            _classification_loss(
-                cls_outputs[level],
-                cls_targets_at_level,
-                num_positives_sum,
-                mask_flat,
-                alpha=params['alpha'],
-                gamma=params['gamma']))
-        box_losses.append(
-            _box_loss(
-                box_outputs[level],
-                box_targets_at_level,
-                num_positives_sum,
-                mask_flat,
-                delta=params['delta']))
+        cls_losses = []
+        box_losses = []
+        mask_flat = tf.reshape(labels["loss_masks"], [-1,1,1,1])
+        for level in levels:
+            # Onehot encoding for classification labels.
+            cls_targets_at_level = tf.one_hot(
+                tools.combine_dims(labels['cls_targets'][level],[0,1]),
+                params['num_classes'])
+            bs, width, height, _, _ = cls_targets_at_level.get_shape().as_list()
+            cls_targets_at_level = tf.reshape(cls_targets_at_level,
+                                              [bs, width, height, -1])
+            box_targets_at_level = tools.combine_dims(labels['box_targets'][level],[0,1])
+            cls_losses.append(
+                _classification_loss(
+                    cls_outputs[level],
+                    cls_targets_at_level,
+                    num_positives_sum,
+                    mask_flat,
+                    alpha=params['alpha'],
+                    gamma=params['gamma']))
+            box_losses.append(
+                _box_loss(
+                    box_outputs[level],
+                    box_targets_at_level,
+                    num_positives_sum,
+                    mask_flat,
+                    delta=params['delta']))
 
-    cls_loss = tf.add_n(cls_losses)
-    box_loss = tf.add_n(box_losses)
-    total_loss = cls_loss + params['box_loss_weight'] * box_loss
+        cls_loss = tf.add_n(cls_losses)
+        box_loss = tf.add_n(box_losses)
+        total_loss = cls_loss + params['box_loss_weight'] * box_loss
     return total_loss, cls_loss, box_loss
