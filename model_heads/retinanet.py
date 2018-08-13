@@ -3,14 +3,17 @@ import tools
 from squeezenext_architecture import squeezenext_unit,arg_scope
 slim = tf.contrib.slim
 
-def class_net(inputs,num_classes,num_anchors):
+def class_net(inputs,num_classes,num_anchors,num_unit_channels=None):
     with tf.variable_scope('class_head'):
         height_first_order = False
-        input_channels = inputs.get_shape().as_list()[-1]
+        if not num_unit_channels:
+            input_channels = inputs.get_shape().as_list()[-1]
+        else:
+            input_channels = num_unit_channels
         net, height_first_order = squeezenext_unit(inputs, input_channels, 1, height_first_order, 1,False)
-        net, height_first_order = squeezenext_unit(inputs, input_channels, 1, height_first_order, 1, False)
-        net, height_first_order = squeezenext_unit(inputs, input_channels*2, 1, height_first_order, 1, False)
-        net, height_first_order = squeezenext_unit(inputs, input_channels*2, 1, height_first_order, 1, False)
+        net, height_first_order = squeezenext_unit(net, input_channels, 1, height_first_order, 1, False)
+        net, height_first_order = squeezenext_unit(net, input_channels*2, 1, height_first_order, 1, False)
+        net, height_first_order = squeezenext_unit(net, input_channels*2, 1, height_first_order, 1, False)
         return slim.conv2d(net, num_classes * num_anchors, [1, 1], scope="output_conv",activation_fn=None,normalizer_fn=None)
 
 def box_net(inputs,num_anchors):
@@ -18,9 +21,9 @@ def box_net(inputs,num_anchors):
         height_first_order = False
         input_channels = inputs.get_shape().as_list()[-1]
         net, height_first_order = squeezenext_unit(inputs, input_channels, 1, height_first_order, 1,False)
-        net, height_first_order = squeezenext_unit(inputs, input_channels, 1, height_first_order, 1, False)
-        net, height_first_order = squeezenext_unit(inputs, input_channels, 1, height_first_order, 1, False)
-        net, height_first_order = squeezenext_unit(inputs, input_channels/2, 1, height_first_order, 1, False)
+        net, height_first_order = squeezenext_unit(net, input_channels, 1, height_first_order, 1, False)
+        net, height_first_order = squeezenext_unit(net, input_channels, 1, height_first_order, 1, False)
+        net, height_first_order = squeezenext_unit(net, input_channels/2, 1, height_first_order, 1, False)
         return slim.conv2d(net, 4 * num_anchors, [1, 1], scope="output_conv",activation_fn=None,normalizer_fn=None)
 
 

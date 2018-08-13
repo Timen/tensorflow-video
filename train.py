@@ -12,7 +12,7 @@ parser = argparse.ArgumentParser(description='Training parser')
 parser.add_argument('--model_dir', type=str, required=True,
                     help='Location of model_dir')
 parser.add_argument('--configuration', type=str, default="v_1_0_SqNxt_23",
-                    help='Name of model config file')
+                    help='Name of model params file')
 parser.add_argument('--batch_size', type=int, default=64,
                     help='Batch size during training')
 parser.add_argument('--num_examples_per_epoch', type=int, default=21000*50,
@@ -52,26 +52,27 @@ def main(argv):
 
     # calculate steps per epoch
     steps_per_epoch = (args.num_examples_per_epoch / args.batch_size / args.sequence_length)
-    # setup config dictionary
-    config = configs[args.configuration]
-    config["model_dir"] = args.model_dir
-    config["output_train_images"] = args.output_train_images
-    config["total_steps"] = steps_per_epoch * args.num_epochs_per_length * args.num_sequence_lengths
-    config["model_dir"] = args.model_dir
-    config["fine_tune_ckpt"] = args.fine_tune_ckpt
+    # setup params dictionary
+    params = configs[args.configuration]
+    params["model_dir"] = args.model_dir
+    params["output_train_images"] = args.output_train_images
+    params["total_steps"] = steps_per_epoch * args.num_epochs_per_length * args.num_sequence_lengths
+    params["model_dir"] = args.model_dir
+    params["fine_tune_ckpt"] = args.fine_tune_ckpt
     if args.debug:
-        read_tf_records = ReadTFRecords(args.batch_size, config)
-        read_tf_records.test(args.training_file_pattern,args.sequence_length,config,True)
+        read_tf_records = ReadTFRecords(args.batch_size, params)
+        read_tf_records.test(args.training_file_pattern,args.sequence_length,params,True)
         hooks = [tf_debug.LocalCLIDebugHook()]
     else:
         hooks = None
 
+
     # init model class
-    model = Model(config)
+    model = Model(params)
     classifier = tf.estimator.Estimator(
         model_dir=args.model_dir,
         model_fn=model.model_fn,
-        params=config)
+        params=params)
 
 
     for i in range(0,args.num_sequence_lengths):

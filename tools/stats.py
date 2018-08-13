@@ -5,14 +5,14 @@ from tensorflow.python.framework import ops
 from collections import defaultdict
 import pandas as pd
 import os
-supported_stat_ops = "Conv2D, MatMul, VariableV2, MaxPool,AvgPool,Add"
+supported_stat_ops = ["Conv2D", "MatMul", "VariableV2", "MaxPool","AvgPool","Add"]
 exclude_in_name = ["gradients", "Initializer", "Regularizer", "AssignMovingAvg", "Momentum", "BatchNorm"]
 
 
 class ModelStats(tf.train.SessionRunHook):
     """Logs model stats to a csv."""
 
-    def __init__(self, scope_name, path,batch_size):
+    def __init__(self, path,normalize_factor, min_flops=32000):
         """
         Set class variables
         :param scope_name:
@@ -22,10 +22,9 @@ class ModelStats(tf.train.SessionRunHook):
         :param batch_size:
             batch size during training
         """
-        self.scope_name = scope_name
-        self.batch_size = batch_size
+        self.normalize_factor = normalize_factor
         self.path = path
-
+        self.min_flops = min_flops
     def begin(self):
         """
             Method to output statistics of the model to an easy to read csv, listing the multiply accumulates(maccs) and
@@ -36,67 +35,27 @@ class ModelStats(tf.train.SessionRunHook):
             unused
         """
         # get graph and operations
-        graph = tf.get_default_graph()
-        operations = graph.get_operations()
+        graph = tf.profiler.profile(
+            tf.get_default_graph(),
+            options=tf.profiler.ProfileOptionBuilder(
+                tf.profiler.ProfileOptionBuilder.trainable_variables_parameter()).float_operation())
         # setup dictionaries
-        biases = defaultdict(lambda: None)
-        stat_dict = defaultdict(lambda: {"params":0,"maccs":0,"adds":0, "comps":0})
-
+        stat_dict = {}
         # iterate over tensors
-        for tensor in operations:
+        for tensor in graph.children:
             name = tensor.name
+
             # check is scope_name is in name, or any of the excluded strings
-            if not self.scope_name in name or any(exclude_name in name for exclude_name in exclude_in_name):
+            if any(exclude_name in name for exclude_name in exclude_in_name):
                 continue
-            # Check if type is considered for the param and macc calcualtion
-            if not tensor.type in supported_stat_ops:
+            # Check if type is considered for the macc calculation
+            if not any(supported_op in name for supported_op in supported_stat_ops):
                 continue
+            if (tensor.total_float_ops/self.normalize_factor) > self.min_flops:
+                stat_dict[tensor.name] = tensor.total_float_ops/self.normalize_factor
 
-            base_name = "/".join(name.split("/")[:-1])
 
-            if name.endswith("weights"):
-                shape = tensor.node_def.attr["shape"].shape.dim
-                sizes = [int(size.size) for size in shape]
-                if any(base_name + "/BatchNorm" in operation.name for operation in operations) or any(
-                        base_name + "/biases" in operation.name for operation in operations):
-                    biases[base_name] = int(sizes[-1])
-                params = 1
-                for dim in sizes:
-                    params = params * dim
-
-                if biases[base_name] is not None:
-                    params = params + biases[base_name]
-                stat_dict[base_name]["params"] = params
-            elif tensor.type == "Add":
-                flops = ops.get_stats_for_node_def(graph, tensor.node_def, 'flops').value
-                if flops is not None:
-                    stat_dict[name]["adds"] = flops  / self.batch_size
-            elif tensor.type == "MaxPool":
-                flops = ops.get_stats_for_node_def(graph, tensor.node_def, 'comps').value
-                if flops is not None:
-                    stat_dict[name]["comps"] = flops / self.batch_size
-            elif tensor.type == "AvgPool":
-                flops = ops.get_stats_for_node_def(graph, tensor.node_def, 'flops').value
-                if flops is not None:
-                    stat_dict[name]["adds"] = flops / self.batch_size
-            elif  tensor.type == "MatMul" or tensor.type == "Conv2D":
-                flops = ops.get_stats_for_node_def(graph, tensor.node_def, 'flops').value
-                if flops is not None:
-                    stat_dict[base_name]["maccs"] += int(flops / 2 / self.batch_size)
-            elif name.endswith("biases"):
-                pass
-            else:
-                print(name,tensor.type)
-                exit()
-        total_params = 0
-        total_maccs = 0
-        total_comps = 0
-        total_adds = 0
-        for key,stat in stat_dict.iteritems():
-            total_maccs += stat["maccs"]
-            total_params += stat["params"]
-            total_adds += stat["adds"]
-            total_comps += stat["comps"]
-        stat_dict["total"] = {"maccs":total_maccs,"params":total_params, "adds":total_adds, "comps":total_comps}
         df = pd.DataFrame.from_dict(stat_dict, orient='index')
+        df.loc['Total'] = df[0].sum()
+        df = df.sort_values(by=[0], ascending=False)
         df.to_csv(os.path.join(self.path,'model_stats.csv'))

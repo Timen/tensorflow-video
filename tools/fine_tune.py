@@ -11,7 +11,7 @@ def remap_vars(variables,remove_scope):
     return variables_dict
 
 
-def init_weights(scope_name, path, ignore_vars=[],ignore_strings=[]):
+def init_weights(scope_name, path, ignore_strings=[]):
     if path == None:
         return
 
@@ -21,9 +21,8 @@ def init_weights(scope_name, path, ignore_vars=[],ignore_strings=[]):
 
     if model_path:
         # only restore variables in the scope_name scope
-        ignore_vars = [scope_name+var for var in ignore_vars]
 
-        variables_to_restore = slim.get_variables_to_restore(include=[scope_name],exclude=ignore_vars)
+        variables_to_restore = slim.get_variables_to_restore(include=[scope_name])
         variables_to_restore = filter(lambda variable: not any( ignore_string in variable.name for ignore_string in ignore_strings) , variables_to_restore)
         variables_to_restore = remap_vars(variables_to_restore,scope_name)
 

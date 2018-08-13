@@ -152,14 +152,14 @@ def bottleneck_lstm(inputs,state,filters):
     return output,state
 
 
-class ConvolutionalLstm(tf.nn.rnn_cell.RNNCell):
+class BottleneckLSTM(tf.nn.rnn_cell.RNNCell):
     """
     Adapted from TF's BasicLSTMCell to use Layer Normalization.
     Note that state_is_tuple is always True.
     """
 
     def __init__(self, input_shapes,num_filters=None, scope=None):
-        super(ConvolutionalLstm, self).__init__()
+        super(BottleneckLSTM, self).__init__()
         self._endpoints = []
         if isinstance(input_shapes, collections.OrderedDict):
             self._input_shapes = []

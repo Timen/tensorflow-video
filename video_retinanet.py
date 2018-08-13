@@ -72,13 +72,13 @@ class Model(object):
 
         classifier = squeezenext.SqueezeNext(self.num_classes, params["block_defs"], params["input_def"],
                                              params["groups"], params["seperate_relus"])
+
         with slim.arg_scope(classifier.model_arg_scope(training)):
             with tf.variable_scope("classifier"):
-                classifier_endpoints,scope_string = tfe.time_distributed(features["images"], unpadded_features, classifier,
+                classifier_endpoints = tfe.time_distributed(features["images"], unpadded_features, classifier,
                                                             [[28, 28, 64], [14, 14, 128], [7, 7, 256]],
-                                                            endpoints=["block_1/unit_0", "block_2/unit_0", "block_3/unit_0"],
-                                                            return_scope_string=True)
-        conv_lstm = tfe.ConvolutionalLstm(classifier_endpoints)
+                                                            endpoints=["block_1/unit_0", "block_2/unit_0", "block_3/unit_0"])
+        conv_lstm = tfe.BottleneckLSTM(classifier_endpoints,num_filters=32)
 
         with tf.variable_scope("bottleneck_lstm"):
             initializer = tfe.initial_state.make_gaussian_state_initializer(tfe.initial_state.make_variable_state_initializer(),
@@ -99,10 +99,13 @@ class Model(object):
                                                             model_head,
                                                             model_head.output_size(predictions))
 
+
         loss, cls_loss, box_loss = detection_loss(predictions, labels, params)
 
         # create histogram of class spread
         tf.summary.histogram("classes", labels["cls_targets"][params["min_level"]])
+        tf.summary.histogram("sequence_length", unpadded_features)
+
 
         if training:
             tf.summary.scalar("box_loss", box_loss)
@@ -116,35 +119,35 @@ class Model(object):
             if params["output_train_images"]:
                 tools.draw_box_predictions(features["images"], predictions, labels, params, sequence_length)
 
-            # stats_hook = tools.stats.ModelStats("rnn/"+conv_lstm.scope_name+"/squeezenext", params["model_dir"],
-            # batch_size*sequence_length)
+            stats_hook = tools.stats.ModelStats(params["model_dir"],batch_size*sequence_length)
             # setup fine tune scaffold
             scaffold = tf.train.Scaffold(init_op=None,
                                          init_fn=tools.fine_tune.init_weights(
-                                             scope_string, params["fine_tune_ckpt"],
-                                             ignore_vars=["/squeezenext/fully_connected/weights"],
-                                                ignore_strings = ["RMSProp"]))
+                                             "classifier/rnn/TimeDistributedWrapper", params["fine_tune_ckpt"],
+                                             ignore_strings=["/squeezenext/fully_connected/weights","RMSProp"]))
 
             # create estimator training spec, which also outputs the model_stats of the model to params["model_dir"]
-            return tf.estimator.EstimatorSpec(mode, loss=loss, train_op=train_op, scaffold=scaffold)
+            return tf.estimator.EstimatorSpec(mode, loss=loss, train_op=train_op, scaffold=scaffold,training_hooks=[stats_hook])
 
         if mode == tf.estimator.ModeKeys.EVAL:
-            eval_metric = tools.coco_metrics.EvaluationMetric()
-            coco_metrics = eval_metric.estimator_metric_fn(tools.eval_predictions(predictions,params),tools.eval_labels(labels))
-
-            # Define the metrics:
-            # metrics_dict = {
-            #     'Recall@1': tf.metrics.accuracy(tf.argmax(predictions, axis=-1), labels["class_idx"][:, 0]),
-            #     'Recall@5': metrics.streaming_sparse_recall_at_k(predictions, tf.cast(labels["class_idx"], tf.int64),
-            #                                                      5)
-            # }
-            # output eval images
-            eval_summary_hook = tf.train.SummarySaverHook(
-                save_steps=100,
-                output_dir=os.path.join(params["model_dir"],"eval"),
-                summary_op=tf.summary.image("validation", features["images"][0,:,:,:,:]))
+            # eval_metric = tools.coco_metrics.EvaluationMetric()
+            # coco_metrics = eval_metric.estimator_metric_fn(tools.eval_predictions(predictions,params),tools.eval_labels(labels))
+            #
+            # # Define the metrics:
+            # # metrics_dict = {
+            # #     'Recall@1': tf.metrics.accuracy(tf.argmax(predictions, axis=-1), labels["class_idx"][:, 0]),
+            # #     'Recall@5': metrics.streaming_sparse_recall_at_k(predictions, tf.cast(labels["class_idx"], tf.int64),
+            # #                                                      5)
+            # # }
+            # # output eval images
+            # eval_summary_hook = tf.train.SummarySaverHook(
+            #     save_steps=100,
+            #     output_dir=os.path.join(params["model_dir"],"eval"),
+            #     summary_op=tf.summary.image("validation", features["images"][0,:,:,:,:]))
 
             #return eval spec
+            return tf.estimator.EstimatorSpec(
+                mode, loss=loss)
             return tf.estimator.EstimatorSpec(
                 mode, loss=loss, eval_metric_ops=coco_metrics,
                 evaluation_hooks=[eval_summary_hook])

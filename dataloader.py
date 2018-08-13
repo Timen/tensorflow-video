@@ -154,7 +154,7 @@ class InputReader(object):
         # index = tf.cast(tf.reshape(tf.sparse_tensor_to_dense(context_features["object_in_frame"]),[-1,1]),tf.int32)
         example_length = tf.cast(context_features["length"], tf.int32)
         first_frame = tf.random_uniform([1], maxval=tf.maximum(
-            example_length - sequence_length, 1), dtype=tf.int32)[0]
+            example_length - sequence_length/2, 1), dtype=tf.int32)[0]
         indices = tf.range(first_frame, tf.minimum(first_frame + sequence_length,example_length), dtype=tf.int32)
         jpeg_images = tf.gather(sequence_features["images"], indices)
 

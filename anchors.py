@@ -34,7 +34,7 @@ from object_detection import region_similarity_calculator
 from object_detection import target_assigner
 
 # The minimum score to consider a logit for identifying detections.
-MIN_CLASS_SCORE = -5.0
+MIN_CLASS_SCORE = -0.0
 
 # The score for a dummy detection
 _DUMMY_DETECTION_SCORE = -1e5

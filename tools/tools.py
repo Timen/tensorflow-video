@@ -88,7 +88,7 @@ def eval_predictions(predictions,params):
     cls_outputs_dict = {}
     box_outputs_dict = {}
 
-    for idx,(cls_outputs,box_outputs) in enumerate(zip(*predictions)):
+    for idx,(cls_outputs,box_outputs) in enumerate(predictions):
         cls_outputs_dict[params["min_level"]+idx] = combine_dims(cls_outputs,[0,1])
         box_outputs_dict[params["min_level"]+idx] = combine_dims(box_outputs, [0, 1])
     results = get_pred_results(cls_outputs_dict,box_outputs_dict,params)
@@ -103,7 +103,15 @@ def eval_labels(labels):
 
 
 def create_feature_pyramid(inputs, default_length=128):
-    inputs = [ slim.conv2d(tensor,default_length,[1,1]) for tensor in inputs]
+    length = None
+    all_equal = True
+    for input_tensor in inputs:
+        if length is None:
+            length = input_tensor.get_shape().as_list()[-1]
+        elif length != input_tensor.get_shape().as_list()[-1]:
+            all_equal = False
+    if not all_equal:
+        inputs = [ slim.conv2d(tensor,default_length,[1,1]) for tensor in inputs]
     with tf.name_scope("feature_pyramid"):
         for idx, input_image in enumerate(inputs):
             if idx+1 < len(inputs):

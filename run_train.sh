@@ -2,6 +2,7 @@
 DATE=`date '+%Y-%m-%d_%H-%M'`
 TRAIN_PATH="/usr/local/share/models/"
 TRAIN_DIR=$TRAIN_PATH$DATE
+#TRAIN_DIR="/usr/local/share/models/2018-08-11_11-52/"
 
 if [[ ! -e $DATA_DIR ]]; then
     echo "Data dir $DATA_DIR does not exists." 1>&2

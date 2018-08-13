@@ -52,7 +52,7 @@ class TimeDistributedWrapper(tf.nn.rnn_cell.RNNCell):
 
 
 
-def time_distributed( inputs, sequence_length, model, output_shape, endpoints=None, scope=None, dtype=tf.float32,return_scope_string=False):
+def time_distributed( inputs, sequence_length, model, output_shape, endpoints=None, scope=None, dtype=tf.float32):
     time_cell = TimeDistributedWrapper(model, output_shape, endpoints=endpoints, scope=scope)
     predictions, _ = tf.nn.dynamic_rnn(
         cell=time_cell,
@@ -65,7 +65,4 @@ def time_distributed( inputs, sequence_length, model, output_shape, endpoints=No
         for key,prediction in zip(endpoints,predictions):
             prediction_endpoints[key] = prediction
         predictions = prediction_endpoints
-    if return_scope_string:
-        return predictions,time_cell.scope_string
-    else:
-        return predictions
+    return predictions
